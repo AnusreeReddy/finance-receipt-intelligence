@@ -3,4 +3,4 @@ __pycache__/
 *.db
 # *.pkl
 .env
-.vscode/
+.vscode/backend/paddlepaddle-2.6.2-cp312-cp312-win_amd64.whl

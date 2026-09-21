@@ -1,0 +1,546 @@
+=== FILE: .\all_code.txt ===
+
+
+=== FILE: .\requirements.txt ===
+flask
+pandas
+numpy
+scikit-learn
+matplotlib
+
+=== FILE: .\backend\app.py ===
+import nltk
+
+# Download NLTK data if not already present
+try:
+    nltk.data.find('corpora/wordnet')
+    nltk.data.find('corpora/omw-1.4') # Ensure omw-1.4 is also checked/downloaded
+except LookupError: # Corrected exception type
+    print("NLTK resource 'wordnet' or 'omw-1.4' not found. Downloading...")
+    nltk.download('wordnet')
+    nltk.download('omw-1.4') # Download omw-1.4 as well
+    print("NLTK resources downloaded successfully.")
+
+from flask import Flask, request, jsonify
+from flask_cors import CORS, cross_origin
+import joblib 
+import numpy as np
+from nltk.stem import WordNetLemmatizer
+import sqlite3
+import os
+
+app = Flask(__name__)
+cors = CORS(app) 
+app.config['CORS_HEADERS'] = 'Content-Type'
+
+# Database file
+DB_FILE = 'database.db'
+
+# Initialize database
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS transactions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL,
+                    amount REAL NOT NULL,
+                    description TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    type TEXT NOT NULL
+                )''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# Initialize lemmatizer
+lemmatizer = WordNetLemmatizer()
+
+# Preprocessing function
+def preprocess_text(text):
+    return ' '.join([lemmatizer.lemmatize(word) for word in text.lower().split()])
+
+# Load the trained model and vectorizer
+model = None
+vectorizer = None
+CATEGORIES = [] 
+TYPES_MAP = {} 
+
+try:
+    model = joblib.load('../models/expense_categorization_model.pkl')
+    vectorizer = joblib.load('../models/vectorizer.pkl')
+
+    CATEGORIES = list(model.classes_)
+    print(f"Loaded Model Categories (from model.classes_): {CATEGORIES}")
+
+    TYPES_MAP = {
+        'Food': 'Expense',
+        'Shopping': 'Expense',
+        'Travel': 'Expense',
+        'Entertainment': 'Expense',
+        'Health': 'Expense',
+        'Utilities': 'Expense',
+        'Education': 'Expense',
+        'Housing': 'Expense',
+        'Insurance': 'Expense',
+        'Income': 'Savings'
+    }
+
+    TYPES = [TYPES_MAP.get(cat, 'Expense') for cat in CATEGORIES]
+
+    print(f"Mapped Types: {TYPES}")
+    print("✅ Model and vectorizer loaded successfully.")
+
+except FileNotFoundError:
+    print("❌ Error: expense_categorization_model.pkl or vectorizer.pkl not found.")
+except Exception as e:
+    print(f"❌ Error loading model or vectorizer: {e}")
+
+def predict_transaction_details(description):
+    if model is None or vectorizer is None or not CATEGORIES:
+        print("Prediction skipped: Model, vectorizer, or categories not loaded.")
+        return "Unknown", "Unknown"
+    preprocessed_desc = preprocess_text(description)
+    desc_vectorized = vectorizer.transform([preprocessed_desc])
+    predicted_category = model.predict(desc_vectorized)[0] 
+    predicted_type = TYPES_MAP.get(predicted_category, 'Unknown') 
+    return predicted_category, predicted_type
+
+@app.route('/predict_category', methods=['POST'])
+@cross_origin()
+def predict_category_route():
+    data = request.json
+    description = data.get('description', '')
+    if not description:
+        return jsonify({"error": "Description is required"}), 400
+    predicted_category, predicted_type = predict_transaction_details(description)
+    return jsonify({
+        "status": "success",
+        "description": description,
+        "predicted_category": predicted_category,
+        "predicted_type": predicted_type
+    })
+
+@app.route('/api/add_transaction', methods=['POST'])
+@cross_origin()
+def add_transaction():
+    data = request.json
+    username = data.get('username')
+    amount = data.get('amount')
+    description = data.get('description')
+    if not all([username, amount, description]):
+        return jsonify({"status": "error", "message": "Missing transaction data"}), 400
+    predicted_category, predicted_type = predict_transaction_details(description)
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('INSERT INTO transactions (username, amount, description, category, type) VALUES (?, ?, ?, ?, ?)',
+              (username, amount, description, predicted_category, predicted_type))
+    conn.commit()
+    conn.close()
+    
+    print(f"Adding transaction for {username}: Amount={amount}, Description='{description}', Category={predicted_category}, Type={predicted_type}")
+    return jsonify({
+        "status": "success",
+        "message": "Transaction added successfully.",
+        "username": username,
+        "amount": amount,
+        "description": description,
+        "predicted_category": predicted_category,
+        "predicted_type": predicted_type
+    })
+
+@app.route('/api/get_transactions/<username>', methods=['GET'])
+@cross_origin()
+def get_transactions(username):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT amount, description, category, type FROM transactions WHERE username = ?', (username,))
+    rows = c.fetchall()
+    conn.close()
+    transactions = [{"amount": row[0], "description": row[1], "category": row[2], "type": row[3]} for row in rows]
+    print(f"Retrieving transactions for {username}: {transactions}")
+    return jsonify({"status": "success", "username": username, "transactions": transactions})
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
+=== FILE: .\backend\arima_model.py ===
+
+
+=== FILE: .\backend\train_model.py ===
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+import joblib
+import nltk
+nltk.download('wordnet')
+from nltk.stem import WordNetLemmatizer
+from textblob import TextBlob # Keep import, but .correct() is removed from functions
+
+# Initialize lemmatizer
+lemmatizer = WordNetLemmatizer()
+
+# Lemmatize function (TextBlob.correct() removed)
+def lemmatize_text(text):
+    # Only lowercase and lemmatize, no spelling correction
+    return ' '.join([lemmatizer.lemmatize(word) for word in text.lower().split()])
+
+# VERIFIED AND FURTHER EXPANDED DATASET (Shopping and Income especially)
+data = {
+    'description': [
+        # Food (26 items)
+        'Dinner at restaurant', 'Lunch at cafe', 'Grocery shopping at mall',
+        'Breakfast at hotel', 'Snacks at coffee shop', 'Tea at roadside stall', 'Lunch with colleagues',
+        'Pizza order online', 'Dinner buffet at restaurant', 'Coffee at Starbucks',
+        'Ordered food on Swiggy', 'Ice cream from Baskin Robbins', 'bought groceries', 'cafe bill',
+        'bought a large pizza', 'ordered pizza delivery', 'ate pizza for dinner', 'pizza from dominos',
+        'fine dining experience', 'fast food purchase', 'supermarket shopping for food',
+        'vegetable purchase', 'fruit stand', 'bakery items', 'restaurant bill', 'drink purchase',
+
+        # Travel (23 items)
+        'Uber ride', 'Flight to Mumbai', 'Train ticket booking', 'Bus fare payment',
+        'Taxi fare to airport', 'Metro card recharge', 'Rental car booking', 'Boat ride tickets',
+        'Cab ride to office', 'Petrol for car', 'Highway toll payment', 'Train pass renewal',
+        'flight tickets', 'bus travel', 'airport taxi', 'hotel booking', 'vacation package',
+        'local transport', 'fuel expense', 'train journey', 'toll gate', 'car rental',
+
+        # Entertainment (20 items)
+        'Netflix subscription', 'Movie at PVR', 'Concert ticket', 'Amusement park entry',
+        'Museum ticket', 'Live sports match ticket', 'Stand-up comedy show',
+        'Amazon Prime renewal', 'Spotify subscription', 'Game download Steam',
+        'cinema tickets', 'video game purchase', 'attraction entry fee', 'music concert',
+        'theatre show', 'online streaming service', 'app game purchase', 'arcade games',
+        'event ticket', 'party expense',
+
+        # Shopping (30 items) - Significantly Expanded
+        'New shoes from store', 'Bought jeans online', 'Grocery shopping at Walmart',
+        'Bought vegetables from local market', 'Purchased books', 'Bought cosmetics',
+        'Purchased gifts for birthday', 'Bought a mobile phone', 'Shopping at mall',
+        'new clothes', 'online shopping', 'electronics purchase', 'vegetable market',
+        'fashion items', 'home decor', 'jewelry purchase', 'childrens toys', 'sports equipment',
+        'bought new running shoes', 'purchased a pair of shoes', 'shoe store visit',
+        'footwear shopping', 'dress purchase', 'shirt bought', 'new gadget',
+        'books from amazon', 'stationery items', 'kitchen appliances', 'home furnishings',
+        'birthday present',
+
+        # Health (18 items)
+        'Doctor appointment', 'Buy medicines', 'Health insurance premium',
+        'Dental cleaning appointment', 'Gym membership', 'Yoga class payment',
+        'Dental appointment', 'General checkup', 'Eye test and glasses', 'Hospital emergency visit',
+        'pharmacy bill', 'medical checkup', 'physiotherapy session', 'medicine purchase',
+        'health checkup', 'prescription refill', 'clinic visit', 'vaccination cost',
+
+        # Utilities (16 items)
+        'Electricity bill', 'Phone recharge', 'Water bill payment', 'Internet broadband bill',
+        'DTH recharge', 'Gas bill', 'Mobile data top-up', 'Landline bill payment',
+        'home electricity bill', 'wifi bill', 'phone top up', 'cooking gas payment',
+        'utility bill payment', 'broadband service', 'water supply bill', 'sewage charges',
+
+        # Education (14 items)
+        'Online course payment', 'Tuition fee payment', 'Book purchase for studies',
+        'Exam fee', 'Enrolled in Udemy course', 'School uniform purchase',
+        'college fees', 'textbook purchase', 'course subscription', 'exam registration',
+        'educational software', 'school supplies', 'university tuition', 'workshop fee',
+
+        # Income (25 items) - Expanded slightly
+        'Salary for the month', 'Freelance project payment', 'Bonus from office',
+        'Dividend from investment', 'Interest from savings', 'Sold old laptop',
+        'Monthly paycheck received', 'Payment for consulting', 'Annual bonus',
+        'Bank interest credited', 'Stock dividends', 'Sold old phone',
+        'Revenue from project', 'Client payment', 'Rental income',
+        'Refund received', 'Tax refund', 'Received payment', 'Paycheck deposit',
+        'investment returns', 'royalty payment', 'gift money received',
+        'consulting fee', 'commission earned', 'investment profit',
+
+        # Rent / Housing (14 items)
+        'House rent payment', 'Monthly apartment rent', 'Paying rent to landlord',
+        'Security deposit for apartment', 'EMI for home loan', 'Apartment maintenance charges',
+        'rent payment', 'home loan installment', 'building maintenance', 'property tax',
+        'mortgage payment', 'home renovation', 'furnace repair', 'plumbing service',
+
+        # Insurance (9 items)
+        'Car insurance premium', 'Life insurance payment', 'Health policy renewal',
+        'auto insurance', 'home insurance', 'travel insurance premium',
+        'insurance policy payment', 'premium payment', 'health insurance plan'
+    ],
+    'category': [
+        # Food (26 items)
+        'Food', 'Food', 'Shopping', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food',
+        'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food',
+
+        # Travel (23 items)
+        'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel',
+        'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel',
+
+        # Entertainment (20 items)
+        'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment',
+        'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment',
+        'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment',
+
+        # Shopping (30 items)
+        'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping',
+        'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping',
+        'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping',
+        'Shopping', 'Shopping', 
+
+        # Health (18 items)
+        'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health',
+        'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health',
+
+        # Utilities (16 items)
+        'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities',
+        'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities',
+
+        # Education (14 items)
+        'Education', 'Education', 'Education', 'Education', 'Education', 'Education',
+        'Education', 'Education', 'Education', 'Education', 'Education', 'Education', 'Education', 'Education',
+
+        # Income (25 items)
+        'Income', 'Income', 'Income', 'Income', 'Income', 'Income',
+        'Income', 'Income', 'Income', 'Income', 'Income', 'Income',
+        'Income', 'Income', 'Income', 'Income', 'Income', 'Income', 'Income', 'Income', 'Income', 'Income',
+        'Income', 'Income', 'Income',
+
+        # Housing (14 items)
+        'Housing', 'Housing', 'Housing', 'Housing', 'Housing', 'Housing',
+        'Housing', 'Housing', 'Housing', 'Housing', 'Housing', 'Housing', 'Housing', 'Housing',
+
+        # Insurance (9 items)
+        'Insurance', 'Insurance', 'Insurance', 'Insurance', 'Insurance', 'Insurance',
+        'Insurance', 'Insurance', 'Insurance'
+    ]
+}
+
+# --- TEMPORARY CHECK (Can remove this block after successful run, but it's good for verification) ---
+if len(data['description']) != len(data['category']):
+    print(f"ERROR: Description list length ({len(data['description'])}) does not match category list length ({len(data['category'])}).")
+    exit() # Stop the script if there's a mismatch
+else:
+    print(f"Lengths match: {len(data['description'])} items.")
+# --- END TEMPORARY CHECK ---
+
+# Convert to DataFrame and lemmatize
+df = pd.DataFrame(data)
+df['description'] = df['description'].apply(lemmatize_text)
+
+# Features and Labels
+X = df['description']
+y = df['category']
+
+# Vectorize
+vectorizer = TfidfVectorizer()
+X_vec = vectorizer.fit_transform(X)
+
+# Split data
+X_train, X_test, y_train, y_test = train_test_split(X_vec, y, test_size=0.2, random_state=42)
+
+# Train model
+model = MultinomialNB()
+model.fit(X_train, y_train)
+
+# Save model and vectorizer
+joblib.dump(model, 'expense_categorization_model.pkl')
+joblib.dump(vectorizer, 'vectorizer.pkl')
+print("✅ Model and vectorizer saved!")
+
+# Evaluate model
+y_pred = model.predict(X_test)
+print("\n📊 Classification Report:\n")
+print(classification_report(y_test, y_pred))
+
+# Define the category to type mapping (same as in app.py)
+category_to_type = {
+    'Food': 'Expense',
+    'Shopping': 'Expense',
+    'Travel': 'Expense',
+    'Entertainment': 'Expense',
+    'Health': 'Expense',
+    'Utilities': 'Expense',
+    'Education': 'Expense',
+    'Housing': 'Expense',
+    'Insurance': 'Expense',
+    'Income': 'Savings'
+}
+
+# Example prediction with type (TextBlob.correct() removed)
+new_description = "bonus" # Testing "shoes" directly
+lemmatized = lemmatize_text(new_description)
+new_tfidf = vectorizer.transform([lemmatized])
+prediction_category = model.predict(new_tfidf)[0]
+prediction_type = category_to_type.get(prediction_category, 'Unknown')
+
+print(f"\n🧾 Original Description: '{new_description}'")
+print(f"   Lemmatized (no spelling correction): '{lemmatized}'")
+print(f"   Predicted Detailed Category: {prediction_category}")
+print(f"   Predicted Type (Expense/Savings): {prediction_type}")
+
+# Also test "salary" again to ensure it's still correct
+new_description = "investment"
+lemmatized = lemmatize_text(new_description)
+new_tfidf = vectorizer.transform([lemmatized])
+prediction_category = model.predict(new_tfidf)[0]
+prediction_type = category_to_type.get(prediction_category, 'Unknown')
+
+print(f"\n🧾 Original Description: '{new_description}'")
+print(f"   Lemmatized (no spelling correction): '{lemmatized}'")
+print(f"   Predicted Detailed Category: {prediction_category}")
+print(f"   Predicted Type (Expense/Savings): {prediction_type}")
+
+=== FILE: .\frontend\add_transaction.html ===
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Add Transaction</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <h2>Add Transaction</h2>
+
+    <form id="transaction-form">
+        <label>Amount:</label>
+        <input type="number" id="amount" min="0.01" step="0.01" required />
+
+        <label>Description:</label>
+        <input type="text" id="description" required />
+
+        <button type="submit">Submit</button>
+        <button type="button" id="back-btn">Back</button>
+    </form>
+    <script src="add_transaction.js"></script>
+</body>
+</html>
+
+=== FILE: .\frontend\dashboard.html ===
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dashboard</title>
+    <link rel="stylesheet" href="style.css" />
+    <script defer src="dashboard.js"></script>
+</head>
+<body>
+    <h2 id="user-greeting">Welcome to Your Dashboard</h2>
+    <div class="dashboard-actions">
+    <button id="add-transaction-btn" class="dashboard-btn">Add Transaction</button>
+    <button id="view-transactions-btn" class="dashboard-btn">View Transactions</button>
+    <button id="logout-btn" class="dashboard-btn logout-btn">Logout</button>
+</div>
+
+
+    <div id="summary-section">
+        <p id="summary-savings">Total Savings: ₹0.00</p>
+        <p id="summary-expenses">Total Expenses: ₹0.00</p>
+        <p id="summary-balance">Net Balance: ₹0.00</p>
+    </div>
+</body>
+</html>
+
+=== FILE: .\frontend\login.html ===
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Login | Finance Tracker</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="login.js" defer></script>
+</head>
+<body>
+    <div class="container">
+        <div class="welcome-box">
+            <h1>Welcome!</h1>
+            <p>To Our New Website.</p>
+            <p>Save Money! Rule Future</p>
+            <div class="social-links">
+                <a href="#"><i class="fab fa-linkedin"></i></a>
+                <a href="#"><i class="fab fa-facebook"></i></a>
+                <a href="#"><i class="fab fa-instagram"></i></a>
+                <a href="#"><i class="fab fa-twitter"></i></a>
+            </div>
+        </div>
+        <div class="login-box">
+            <h2>Sign In</h2>
+            <form id="login-form">
+                <div class="input-group">
+                    <input type="email" id="email" placeholder="Email" required />
+                    <i class="fas fa-envelope"></i>
+                </div>
+                <div class="input-group">
+                    <input type="password" id="password" placeholder="Password" required />
+                    <i class="fas fa-lock"></i>
+                </div>
+                <div class="options">
+                    <label><input type="checkbox" /> Remember me</label>
+                    <a href="#">Forgot password?</a>
+                </div>
+                <button type="submit" class="btn">Sign In</button>
+                <p>Don’t have an account? <a href="register.html" id="register-link">Sign up</a></p>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+
+=== FILE: .\frontend\register.html ===
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - Finance Tracker</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="register.js" defer></script>
+</head>
+<body>
+    <div class="container">
+        <div class="register-box">
+            <h2>Sign Up</h2>
+            <form id="register-form">
+                <input type="text" id="name" placeholder="Full Name" required>
+                <input type="email" id="email" placeholder="Email" required>
+                <input type="password" id="password" placeholder="Password" required>
+                <input type="password" id="confirm-password" placeholder="Confirm Password" required>
+                <button type="submit">Sign Up</button>
+            </form>
+            <p>Already have an account? <a href="login.html">Sign In</a></p>
+        </div>
+    </div>
+</body>
+</html>
+
+=== FILE: .\frontend\view_transactions.html ===
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>View Transactions</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <h2>Your Transactions</h2>
+
+    <h3>Savings</h3>
+    <ul id="savings-list"></ul>
+    <p id="savings-total"></p>
+
+    <h3>Expenses</h3>
+    <ul id="expenses-list"></ul>
+    <p id="expenses-total"></p>
+    <div class="pagination">
+  <button id="prev-btn" disabled>Previous</button>
+  <span id="page-info">Page 1</span>
+  <button id="next-btn">Next</button>
+</div>
+
+    <button id="back-btn">Back to Dashboard</button>
+    <script src="view_transactions.js"></script>
+</body>
+</html>
+

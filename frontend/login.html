@@ -1,45 +1,31 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Login | Finance Tracker</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" />
-    <link rel="stylesheet" href="style.css" />
-    <script src="login.js" defer></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Receipt Intelligence</title>
+    <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <div class="container">
-        <div class="welcome-box">
-            <h1>Welcome!</h1>
-            <p>To Our New Website.</p>
-            <p>Save Money! Rule Future</p>
-            <div class="social-links">
-                <a href="#"><i class="fab fa-linkedin"></i></a>
-                <a href="#"><i class="fab fa-facebook"></i></a>
-                <a href="#"><i class="fab fa-instagram"></i></a>
-                <a href="#"><i class="fab fa-twitter"></i></a>
+    <div class="auth-container">
+        <h2>System Login</h2>
+        <div id="alert-box" class="alert"></div>
+        <form id="login-form">
+            <div class="form-group">
+                <label for="email">Email Address</label>
+                <input type="email" id="email" required autocomplete="email">
             </div>
-        </div>
-        <div class="login-box">
-            <h2>Sign In</h2>
-            <form id="login-form">
-                <div class="input-group">
-                    <input type="email" id="email" placeholder="Email" required />
-                    <i class="fas fa-envelope"></i>
-                </div>
-                <div class="input-group">
-                    <input type="password" id="password" placeholder="Password" required />
-                    <i class="fas fa-lock"></i>
-                </div>
-                <div class="options">
-                    <label><input type="checkbox" /> Remember me</label>
-                    <a href="#">Forgot password?</a>
-                </div>
-                <button type="submit" class="btn">Sign In</button>
-                <p>Don’t have an account? <a href="register.html" id="register-link">Sign up</a></p>
-            </form>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" required autocomplete="current-password">
+            </div>
+            <button type="submit" class="btn">Sign In</button>
+        </form>
+        <div class="auth-footer">
+            <p>Don't have an account? <a href="register.html">Register here</a></p>
         </div>
     </div>
+    <script src="js/api.js"></script>
+    <script src="js/auth.js"></script>
 </body>
 </html>

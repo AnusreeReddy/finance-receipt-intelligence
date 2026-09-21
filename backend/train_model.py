@@ -1,219 +1,209 @@
-import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.naive_bayes import MultinomialNB
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
-import joblib
-import nltk
-nltk.download('wordnet')
-from nltk.stem import WordNetLemmatizer
-from textblob import TextBlob # Keep import, but .correct() is removed from functions
+#!/usr/bin/env python3
+"""
+Train the expense categorization model.
+Run this script to train/retrain the model with expense data.
+"""
 
-# Initialize lemmatizer
-lemmatizer = WordNetLemmatizer()
+import sys
+import os
 
-# Lemmatize function (TextBlob.correct() removed)
-def lemmatize_text(text):
-    # Only lowercase and lemmatize, no spelling correction
-    return ' '.join([lemmatizer.lemmatize(word) for word in text.lower().split()])
+# Add backend to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# VERIFIED AND FURTHER EXPANDED DATASET (Shopping and Income especially)
-data = {
-    'description': [
-        # Food (26 items)
+from app.services.ml_model import MLModel
+
+
+# Expanded training dataset
+TRAINING_DATA = {
+    'descriptions': [
+        # Food (28 items)
         'Dinner at restaurant', 'Lunch at cafe', 'Grocery shopping at mall',
         'Breakfast at hotel', 'Snacks at coffee shop', 'Tea at roadside stall', 'Lunch with colleagues',
         'Pizza order online', 'Dinner buffet at restaurant', 'Coffee at Starbucks',
-        'Ordered food on Swiggy', 'Ice cream from Baskin Robbins', 'bought groceries', 'cafe bill',
-        'bought a large pizza', 'ordered pizza delivery', 'ate pizza for dinner', 'pizza from dominos',
-        'fine dining experience', 'fast food purchase', 'supermarket shopping for food',
-        'vegetable purchase', 'fruit stand', 'bakery items', 'restaurant bill', 'drink purchase',
+        'Ordered food on delivery app', 'Ice cream from shop', 'Bought groceries', 'Cafe bill',
+        'Bought a large pizza', 'Ordered pizza delivery', 'Ate pizza for dinner', 'Pizza from restaurant',
+        'Fine dining experience', 'Fast food purchase', 'Supermarket shopping for food',
+        'Vegetable purchase from market', 'Fruit stand', 'Bakery items', 'Restaurant bill', 'Drink purchase',
+        'Deli sandwich', 'Sushi restaurant',
 
-        # Travel (23 items)
-        'Uber ride', 'Flight to Mumbai', 'Train ticket booking', 'Bus fare payment',
+        # Travel (25 items)
+        'Uber ride', 'Flight to destination', 'Train ticket booking', 'Bus fare payment',
         'Taxi fare to airport', 'Metro card recharge', 'Rental car booking', 'Boat ride tickets',
         'Cab ride to office', 'Petrol for car', 'Highway toll payment', 'Train pass renewal',
-        'flight tickets', 'bus travel', 'airport taxi', 'hotel booking', 'vacation package',
-        'local transport', 'fuel expense', 'train journey', 'toll gate', 'car rental',
+        'Flight tickets', 'Bus travel', 'Airport taxi', 'Hotel booking', 'Vacation package',
+        'Local transport', 'Fuel expense', 'Train journey', 'Toll gate', 'Car rental',
+        'Parking fee', 'Gas station', 'Airline booking',
 
-        # Entertainment (20 items)
-        'Netflix subscription', 'Movie at PVR', 'Concert ticket', 'Amusement park entry',
+        # Entertainment (22 items)
+        'Netflix subscription', 'Movie at theater', 'Concert ticket', 'Amusement park entry',
         'Museum ticket', 'Live sports match ticket', 'Stand-up comedy show',
-        'Amazon Prime renewal', 'Spotify subscription', 'Game download Steam',
-        'cinema tickets', 'video game purchase', 'attraction entry fee', 'music concert',
-        'theatre show', 'online streaming service', 'app game purchase', 'arcade games',
-        'event ticket', 'party expense',
+        'Amazon Prime renewal', 'Spotify subscription', 'Game purchase', 
+        'Cinema tickets', 'Video game purchase', 'Theme park entry fee', 'Music concert',
+        'Theater show', 'Streaming service', 'Game console purchase', 'Arcade games',
+        'Event ticket', 'Party expense', 'Karaoke night', 'Club entry fee',
 
-        # Shopping (30 items) - Significantly Expanded
-        'New shoes from store', 'Bought jeans online', 'Grocery shopping at Walmart',
-        'Bought vegetables from local market', 'Purchased books', 'Bought cosmetics',
+        # Shopping (32 items) - Expanded
+        'New shoes from store', 'Bought jeans online', 'Grocery shopping',
+        'Bought vegetables from market', 'Purchased books', 'Bought cosmetics',
         'Purchased gifts for birthday', 'Bought a mobile phone', 'Shopping at mall',
-        'new clothes', 'online shopping', 'electronics purchase', 'vegetable market',
-        'fashion items', 'home decor', 'jewelry purchase', 'childrens toys', 'sports equipment',
-        'bought new running shoes', 'purchased a pair of shoes', 'shoe store visit',
-        'footwear shopping', 'dress purchase', 'shirt bought', 'new gadget',
-        'books from amazon', 'stationery items', 'kitchen appliances', 'home furnishings',
-        'birthday present',
+        'New clothes', 'Online shopping', 'Electronics purchase', 'Vegetable market',
+        'Fashion items', 'Home decor', 'Jewelry purchase', 'Childrens toys', 'Sports equipment',
+        'Bought new running shoes', 'Purchased shoes', 'Shoe store visit',
+        'Footwear shopping', 'Dress purchase', 'Shirt bought', 'New gadget',
+        'Books from amazon', 'Stationery items', 'Kitchen appliances', 'Home furnishings',
+        'Birthday present', 'Clothing store', 'Handbag purchase', 'Watch purchase',
 
-        # Health (18 items)
+        # Health (20 items)
         'Doctor appointment', 'Buy medicines', 'Health insurance premium',
         'Dental cleaning appointment', 'Gym membership', 'Yoga class payment',
         'Dental appointment', 'General checkup', 'Eye test and glasses', 'Hospital emergency visit',
-        'pharmacy bill', 'medical checkup', 'physiotherapy session', 'medicine purchase',
-        'health checkup', 'prescription refill', 'clinic visit', 'vaccination cost',
+        'Pharmacy bill', 'Medical checkup', 'Physiotherapy session', 'Medicine purchase',
+        'Health checkup', 'Prescription refill', 'Clinic visit', 'Vaccination cost',
+        'Mental health counseling', 'Fitness classes',
 
         # Utilities (16 items)
         'Electricity bill', 'Phone recharge', 'Water bill payment', 'Internet broadband bill',
         'DTH recharge', 'Gas bill', 'Mobile data top-up', 'Landline bill payment',
-        'home electricity bill', 'wifi bill', 'phone top up', 'cooking gas payment',
-        'utility bill payment', 'broadband service', 'water supply bill', 'sewage charges',
+        'Home electricity bill', 'Wifi bill', 'Phone top up', 'Cooking gas payment',
+        'Utility bill payment', 'Broadband service', 'Water supply bill', 'Sewage charges',
 
-        # Education (14 items)
+        # Education (16 items)
         'Online course payment', 'Tuition fee payment', 'Book purchase for studies',
-        'Exam fee', 'Enrolled in Udemy course', 'School uniform purchase',
-        'college fees', 'textbook purchase', 'course subscription', 'exam registration',
-        'educational software', 'school supplies', 'university tuition', 'workshop fee',
+        'Exam fee', 'Enrolled in online course', 'School uniform purchase',
+        'College fees', 'Textbook purchase', 'Course subscription', 'Exam registration',
+        'Educational software', 'School supplies', 'University tuition', 'Workshop fee',
+        'Language course', 'Training program',
 
-        # Income (25 items) - Expanded slightly
+        # Housing (16 items)
+        'House rent payment', 'Monthly apartment rent', 'Paying rent to landlord',
+        'Security deposit for apartment', 'EMI for home loan', 'Apartment maintenance charges',
+        'Rent payment', 'Home loan installment', 'Building maintenance', 'Property tax',
+        'Mortgage payment', 'Home renovation', 'Furnace repair', 'Plumbing service',
+        'Roof repair', 'Interior decoration',
+
+        # Insurance (11 items)
+        'Car insurance premium', 'Life insurance payment', 'Health policy renewal',
+        'Auto insurance', 'Home insurance', 'Travel insurance premium',
+        'Insurance policy payment', 'Premium payment', 'Health insurance plan',
+        'Business insurance', 'Pet insurance',
+
+        # Income (25 items) - Kept for balance
         'Salary for the month', 'Freelance project payment', 'Bonus from office',
         'Dividend from investment', 'Interest from savings', 'Sold old laptop',
         'Monthly paycheck received', 'Payment for consulting', 'Annual bonus',
         'Bank interest credited', 'Stock dividends', 'Sold old phone',
         'Revenue from project', 'Client payment', 'Rental income',
         'Refund received', 'Tax refund', 'Received payment', 'Paycheck deposit',
-        'investment returns', 'royalty payment', 'gift money received',
-        'consulting fee', 'commission earned', 'investment profit',
-
-        # Rent / Housing (14 items)
-        'House rent payment', 'Monthly apartment rent', 'Paying rent to landlord',
-        'Security deposit for apartment', 'EMI for home loan', 'Apartment maintenance charges',
-        'rent payment', 'home loan installment', 'building maintenance', 'property tax',
-        'mortgage payment', 'home renovation', 'furnace repair', 'plumbing service',
-
-        # Insurance (9 items)
-        'Car insurance premium', 'Life insurance payment', 'Health policy renewal',
-        'auto insurance', 'home insurance', 'travel insurance premium',
-        'insurance policy payment', 'premium payment', 'health insurance plan'
+        'Investment returns', 'Royalty payment', 'Gift money received',
+        'Consulting fee', 'Commission earned', 'Investment profit'
     ],
-    'category': [
-        # Food (26 items)
-        'Food', 'Food', 'Shopping', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food',
-        'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food',
-
-        # Travel (23 items)
-        'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel',
-        'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel',
-
-        # Entertainment (20 items)
+    'categories': [
+        # Food (28)
+        'Food', 'Food', 'Shopping', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 
+        'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 
+        'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food', 'Food',
+        
+        # Travel (25)
+        'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 
+        'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 'Travel', 
+        'Travel', 'Travel', 'Travel', 'Travel', 'Travel',
+        
+        # Entertainment (22)
         'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment',
-        'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment',
-        'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment',
-
-        # Shopping (30 items)
+        'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 
+        'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment', 
+        'Entertainment', 'Entertainment', 'Entertainment', 'Entertainment',
+        
+        # Shopping (32)
         'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping',
         'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping',
         'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping',
-        'Shopping', 'Shopping', 
-
-        # Health (18 items)
+        'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping', 'Shopping',
+        
+        # Health (20)
         'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health',
-        'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health',
-
-        # Utilities (16 items)
+        'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health', 'Health',
+        
+        # Utilities (16)
         'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities',
         'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities', 'Utilities',
-
-        # Education (14 items)
+        
+        # Education (16)
         'Education', 'Education', 'Education', 'Education', 'Education', 'Education',
         'Education', 'Education', 'Education', 'Education', 'Education', 'Education', 'Education', 'Education',
-
-        # Income (25 items)
-        'Income', 'Income', 'Income', 'Income', 'Income', 'Income',
-        'Income', 'Income', 'Income', 'Income', 'Income', 'Income',
-        'Income', 'Income', 'Income', 'Income', 'Income', 'Income', 'Income', 'Income', 'Income', 'Income',
-        'Income', 'Income', 'Income',
-
-        # Housing (14 items)
+        'Education', 'Education',
+        
+        # Housing (16)
         'Housing', 'Housing', 'Housing', 'Housing', 'Housing', 'Housing',
         'Housing', 'Housing', 'Housing', 'Housing', 'Housing', 'Housing', 'Housing', 'Housing',
-
-        # Insurance (9 items)
+        'Housing', 'Housing',
+        
+        # Insurance (11)
         'Insurance', 'Insurance', 'Insurance', 'Insurance', 'Insurance', 'Insurance',
-        'Insurance', 'Insurance', 'Insurance'
+        'Insurance', 'Insurance', 'Insurance', 'Insurance', 'Insurance',
+        
+        # Income (25)
+        'Other', 'Other', 'Other', 'Other', 'Other', 'Other',
+        'Other', 'Other', 'Other', 'Other', 'Other', 'Other',
+        'Other', 'Other', 'Other', 'Other', 'Other', 'Other', 'Other', 'Other', 'Other', 'Other',
+        'Other', 'Other', 'Other'
     ]
 }
 
-# --- TEMPORARY CHECK (Can remove this block after successful run, but it's good for verification) ---
-if len(data['description']) != len(data['category']):
-    print(f"ERROR: Description list length ({len(data['description'])}) does not match category list length ({len(data['category'])}).")
-    exit() # Stop the script if there's a mismatch
-else:
-    print(f"Lengths match: {len(data['description'])} items.")
-# --- END TEMPORARY CHECK ---
 
-# Convert to DataFrame and lemmatize
-df = pd.DataFrame(data)
-df['description'] = df['description'].apply(lemmatize_text)
+def main():
+    """Train the model"""
+    print("🔄 Training expense categorization model...")
+    print(f"   - Training samples: {len(TRAINING_DATA['descriptions'])}")
+    print(f"   - Categories: {set(TRAINING_DATA['categories'])}")
+    
+    # Train
+    model, vectorizer = MLModel.train(
+        TRAINING_DATA['descriptions'],
+        TRAINING_DATA['categories']
+    )
+    
+    print("✅ Model trained successfully!")
+    print(f"   - Model saved to: {MLModel.MODEL_PATH}")
+    print(f"   - Vectorizer saved to: {MLModel.VECTORIZER_PATH}")
+    
+    # Evaluate
+    print("\n📊 Evaluating model...")
+    metrics = MLModel.evaluate(
+        TRAINING_DATA['descriptions'],
+        TRAINING_DATA['categories']
+    )
+    
+    if metrics:
+        print(f"\nOverall Metrics:")
+        print(f"  - Precision: {metrics['precision']:.3f}")
+        print(f"  - Recall:    {metrics['recall']:.3f}")
+        print(f"  - F1-Score:  {metrics['f1']:.3f}")
+        
+        print(f"\nPer-Category Metrics:")
+        for category, cat_metrics in sorted(metrics.get('by_category', {}).items()):
+            print(f"\n  {category}:")
+            print(f"    - Precision: {cat_metrics['precision']:.3f}")
+            print(f"    - Recall:    {cat_metrics['recall']:.3f}")
+            print(f"    - F1-Score:  {cat_metrics['f1']:.3f}")
+            print(f"    - Support:   {cat_metrics['support']}")
+    
+    # Test predictions
+    print("\n🧪 Testing sample predictions:")
+    test_cases = [
+        ('Starbucks Coffee', ['Latte', 'Croissant']),
+        ('Shell Gas Station', ['Premium Fuel']),
+        ('Nike Store', ['Running Shoes']),
+        ('Amazon', ['Book', 'Electronics']),
+        ('City General Hospital', ['Doctor Visit']),
+    ]
+    
+    for merchant, items in test_cases:
+        pred = MLModel.predict(merchant, items)
+        print(f"  - {merchant} + {items} → {pred}")
+    
+    print("\n✅ Training complete!")
 
-# Features and Labels
-X = df['description']
-y = df['category']
 
-# Vectorize
-vectorizer = TfidfVectorizer()
-X_vec = vectorizer.fit_transform(X)
-
-# Split data
-X_train, X_test, y_train, y_test = train_test_split(X_vec, y, test_size=0.2, random_state=42)
-
-# Train model
-model = MultinomialNB()
-model.fit(X_train, y_train)
-
-# Save model and vectorizer
-joblib.dump(model, 'expense_categorization_model.pkl')
-joblib.dump(vectorizer, 'vectorizer.pkl')
-print("✅ Model and vectorizer saved!")
-
-# Evaluate model
-y_pred = model.predict(X_test)
-print("\n📊 Classification Report:\n")
-print(classification_report(y_test, y_pred))
-
-# Define the category to type mapping (same as in app.py)
-category_to_type = {
-    'Food': 'Expense',
-    'Shopping': 'Expense',
-    'Travel': 'Expense',
-    'Entertainment': 'Expense',
-    'Health': 'Expense',
-    'Utilities': 'Expense',
-    'Education': 'Expense',
-    'Housing': 'Expense',
-    'Insurance': 'Expense',
-    'Income': 'Savings'
-}
-
-# Example prediction with type (TextBlob.correct() removed)
-new_description = "bonus" # Testing "shoes" directly
-lemmatized = lemmatize_text(new_description)
-new_tfidf = vectorizer.transform([lemmatized])
-prediction_category = model.predict(new_tfidf)[0]
-prediction_type = category_to_type.get(prediction_category, 'Unknown')
-
-print(f"\n🧾 Original Description: '{new_description}'")
-print(f"   Lemmatized (no spelling correction): '{lemmatized}'")
-print(f"   Predicted Detailed Category: {prediction_category}")
-print(f"   Predicted Type (Expense/Savings): {prediction_type}")
-
-# Also test "salary" again to ensure it's still correct
-new_description = "investment"
-lemmatized = lemmatize_text(new_description)
-new_tfidf = vectorizer.transform([lemmatized])
-prediction_category = model.predict(new_tfidf)[0]
-prediction_type = category_to_type.get(prediction_category, 'Unknown')
-
-print(f"\n🧾 Original Description: '{new_description}'")
-print(f"   Lemmatized (no spelling correction): '{lemmatized}'")
-print(f"   Predicted Detailed Category: {prediction_category}")
-print(f"   Predicted Type (Expense/Savings): {prediction_type}")
+if __name__ == '__main__':
+    main()

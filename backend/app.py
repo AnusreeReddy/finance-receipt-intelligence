@@ -1,4 +1,24 @@
 import nltk
+import os
+import sqlite3
+import joblib
+import numpy as np
+
+from flask import Flask, request, jsonify
+from flask_cors import CORS, cross_origin
+from nltk.stem import WordNetLemmatizer
+from werkzeug.utils import secure_filename
+
+from pipeline import process_receipt
+
+app = Flask(__name__)
+cors = CORS(app)
+app.config["CORS_HEADERS"] = "Content-Type"
+
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
 
 # Download NLTK data if not already present
 try:
@@ -56,21 +76,32 @@ CATEGORIES = []
 TYPES_MAP = {} 
 
 try:
-    model = joblib.load('models/expense_categorization_model.pkl')
+    model = joblib.load('expense_categorization_model.pkl')
     vectorizer = joblib.load('vectorizer.pkl')
+
     CATEGORIES = list(model.classes_)
     print(f"Loaded Model Categories (from model.classes_): {CATEGORIES}")
+
     TYPES_MAP = {
-        'Food': 'Expense', 'Shopping': 'Expense', 'Travel': 'Expense',
-        'Entertainment': 'Expense', 'Health': 'Expense', 'Utilities': 'Expense',
-        'Education': 'Expense', 'Housing': 'Expense', 'Insurance': 'Expense',
+        'Food': 'Expense',
+        'Shopping': 'Expense',
+        'Travel': 'Expense',
+        'Entertainment': 'Expense',
+        'Health': 'Expense',
+        'Utilities': 'Expense',
+        'Education': 'Expense',
+        'Housing': 'Expense',
+        'Insurance': 'Expense',
         'Income': 'Savings'
     }
-    TYPES = [TYPES_MAP.get(cat, 'Expense') for cat in CATEGORIES] 
+
+    TYPES = [TYPES_MAP.get(cat, 'Expense') for cat in CATEGORIES]
+
     print(f"Mapped Types: {TYPES}")
     print("✅ Model and vectorizer loaded successfully.")
+
 except FileNotFoundError:
-    print("❌ Error: expense_categorization_model.pkl or vectorizer.pkl not found. Please ensure they are in the same directory.")
+    print("❌ Error: expense_categorization_model.pkl or vectorizer.pkl not found.")
 except Exception as e:
     print(f"❌ Error loading model or vectorizer: {e}")
 
@@ -139,6 +170,41 @@ def get_transactions(username):
     transactions = [{"amount": row[0], "description": row[1], "category": row[2], "type": row[3]} for row in rows]
     print(f"Retrieving transactions for {username}: {transactions}")
     return jsonify({"status": "success", "username": username, "transactions": transactions})
+
+@app.route("/api/upload_receipt", methods=["POST"])
+@cross_origin()
+def upload_receipt():
+
+    if "receipt" not in request.files:
+        return jsonify({"error": "Receipt image not found"}), 400
+
+    file = request.files["receipt"]
+
+    if file.filename == "":
+        return jsonify({"error": "No file selected"}), 400
+
+    filename = secure_filename(file.filename)
+
+    filepath = os.path.join(
+        app.config["UPLOAD_FOLDER"],
+        filename
+    )
+
+    file.save(filepath)
+
+    receipt = process_receipt(filepath)
+
+    if receipt.get("success") is False:
+        return jsonify(receipt), 500
+
+    description = receipt.get("description", "")
+
+    category, transaction_type = predict_transaction_details(description)
+
+    receipt["predicted_category"] = category
+    receipt["predicted_type"] = transaction_type
+
+    return jsonify(receipt)
 
 if __name__ == '__main__':
     app.run(debug=True)
